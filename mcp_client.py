@@ -1,7 +1,9 @@
 import sys
+import json
 import asyncio
 from typing import Optional, Any
 from contextlib import AsyncExitStack
+from pydantic import AnyUrl
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
@@ -42,26 +44,37 @@ class MCPClient:
         return self._session
 
     async def list_tools(self) -> list[types.Tool]:
-        # TODO: Return a list of tools defined by the MCP server
-        return []
+        # Ask the server which tools it offers (e.g. read_doc_content, edit_document)
+        result = await self.session().list_tools()
+        return result.tools
 
     async def call_tool(
         self, tool_name: str, tool_input: dict
     ) -> types.CallToolResult | None:
-        # TODO: Call a particular tool and return the result
-        return None
+        # Run one tool on the server with the given arguments
+        return await self.session().call_tool(tool_name, tool_input)
 
     async def list_prompts(self) -> list[types.Prompt]:
-        # TODO: Return a list of prompts defined by the MCP server
-        return []
+        # Ask the server which prompts it offers (e.g. format, summarize)
+        result = await self.session().list_prompts()
+        return result.prompts
 
     async def get_prompt(self, prompt_name, args: dict[str, str]):
-        # TODO: Get a particular prompt defined by the MCP server
-        return []
+        # Fill in a prompt with arguments and return its messages
+        result = await self.session().get_prompt(prompt_name, args)
+        return result.messages
 
     async def read_resource(self, uri: str) -> Any:
-        # TODO: Read a resource, parse the contents and return it
-        return []
+        # Fetch a resource by URI and parse it based on its MIME type
+        result = await self.session().read_resource(AnyUrl(uri))
+        resource = result.contents[0]
+
+        if isinstance(resource, types.TextResourceContents):
+            if resource.mimeType == "application/json":
+                return json.loads(resource.text)
+            return resource.text
+
+        return None
 
     async def cleanup(self):
         await self._exit_stack.aclose()
@@ -75,14 +88,27 @@ class MCPClient:
         await self.cleanup()
 
 
-# For testing
+# For testing: run `uv run mcp_client.py` to check everything the server exposes
 async def main():
     async with MCPClient(
         # If using Python without UV, update command to 'python' and remove "run" from args.
         command="uv",
         args=["run", "mcp_server.py"],
-    ) as _client:
-        pass
+    ) as client:
+        tools = await client.list_tools()
+        print("TOOLS:", [tool.name for tool in tools])
+
+        prompts = await client.list_prompts()
+        print("PROMPTS:", [prompt.name for prompt in prompts])
+
+        doc_ids = await client.read_resource("docs://documents")
+        print("DOCUMENT IDS:", doc_ids)
+
+        content = await client.read_resource("docs://documents/deposition.md")
+        print("DEPOSITION:", content)
+
+        result = await client.call_tool("read_doc_content", {"doc_id": "report.pdf"})
+        print("TOOL RESULT:", result.content[0].text if result else None)
 
 
 if __name__ == "__main__":
